@@ -3,9 +3,7 @@ from typing import List, Dict, Any, Tuple
 import operator
 import streamlit as st
 
-# ----------------------------
 # 1) Minimal rule engine
-# ----------------------------
 OPS = {
     "==": operator.eq,
     "!=": operator.ne,
@@ -17,7 +15,7 @@ OPS = {
     "not_in": lambda a, b: a not in b,
 }
 
-# Replaced with the EXACT Lab Report rules
+#  The EXACT Lab Report rules
 DEFAULT_RULES: List[Dict[str, Any]] = [
   {
     "name": "Top merit candidate",
@@ -113,16 +111,14 @@ def run_rules(facts: Dict[str, Any], rules: List[Dict[str, Any]]) -> Tuple[Dict[
     best = fired_sorted[0].get("action", {"decision": "PENDING", "reason": "No action"})
     return best, fired_sorted
 
-# ----------------------------
 # 2) Streamlit UI
-# ----------------------------
 st.set_page_config(page_title="Rule-Based System (Scholarship)", page_icon="🎓", layout="wide")
 st.title("🎓 Rule-Based System (Scholarship Advisory)")
 st.caption("Enter applicant data, edit rules in the JSON editor, and evaluate.")
 
 with st.sidebar:
     st.header("Applicant Facts")
-    # Updated sidebar inputs to match scholarship facts
+    
     cgpa = st.number_input("Cumulative GPA (CGPA)", min_value=0.0, max_value=4.0, step=0.01, value=3.5)
     family_income = st.number_input("Monthly income (RM)", min_value=0, step=100, value=5000)
     co_curricular_score = st.number_input("Co-curricular score (0-100)", min_value=0, max_value=100, step=1, value=75)
@@ -136,7 +132,7 @@ with st.sidebar:
 
     run = st.button("Evaluate Application", type="primary")
 
-# Updated facts dictionary mapping
+
 facts = {
     "cgpa": float(cgpa),
     "family_income": int(family_income),
@@ -147,7 +143,6 @@ facts = {
 st.subheader("Applicant Facts")
 st.json(facts)
 
-# Parse rules (fall back to defaults if invalid)
 try:
     rules = json.loads(rules_text)
     assert isinstance(rules, list), "Rules must be a JSON array"
@@ -170,7 +165,6 @@ if run:
         badge = action.get("decision", "REVIEW")
         reason = action.get("reason", "-")
         
-        # Output conditions updated for scholarship decisions
         if badge == "AWARD FULL" or badge == "AWARD PARTIAL":
             st.success(f"**{badge}** — {reason}")
         elif badge == "REJECT":
