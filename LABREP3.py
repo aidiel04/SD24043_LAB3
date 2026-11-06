@@ -1,19 +1,24 @@
-import streamlit as st
 import json
+from typing import List, Dict, Any, Tuple
 import operator
+import streamlit as st
 
-# Mapping string operators from JSON to Python's operator module
-ops = {
-    ">=": operator.ge,
-    "<=": operator.le,
-    "<": operator.lt,
-    ">": operator.gt,
+# ----------------------------
+# 1) Minimal rule engine
+# ----------------------------
+OPS = {
     "==": operator.eq,
-    "!=": operator.ne
+    "!=": operator.ne,
+    ">": operator.gt,
+    ">=": operator.ge,
+    "<": operator.lt,
+    "<=": operator.le,
+    "in": lambda a, b: a in b,
+    "not_in": lambda a, b: a not in b,
 }
 
-# The EXACT JSON rules required by the lab, in the exact original order
-default_rules = """[
+# Replaced with the EXACT Lab Report rules
+DEFAULT_RULES: List[Dict[str, Any]] = [
   {
     "name": "Top merit candidate",
     "priority": 100,
@@ -76,83 +81,114 @@ default_rules = """[
       "reason": "Too many disciplinary records"
     }
   }
-]"""
+]
 
-def evaluate_rules(facts, rules):
-    # Sort rules by priority descending (highest priority evaluated first)
-    sorted_rules = sorted(rules, key=lambda x: x["priority"], reverse=True)
-    
-    for rule in sorted_rules:
-        conditions_met = True
-        for condition in rule["conditions"]:
-            fact_name, op_str, value = condition
-            
-            # If the fact isn't provided, the condition fails
-            if fact_name not in facts:
-                conditions_met = False
-                break
-            
-            # Evaluate the condition
-            fact_value = facts[fact_name]
-            if not ops[op_str](fact_value, value):
-                conditions_met = False
-                break
-        
-        # If all conditions for this rule are met, trigger the action
-        if conditions_met:
-            return rule["name"], rule["action"]
-            
-    return "No Match", {"decision": "PENDING", "reason": "No specific rules were triggered by these facts."}
+def evaluate_condition(facts: Dict[str, Any], cond: List[Any]) -> bool:
+    """Evaluate a single condition: [field, op, value]."""
+    if len(cond) != 3:
+        return False
+    field, op, value = cond
+    if field not in facts or op not in OPS:
+        return False
+    try:
+        return OPS[op](facts[field], value)
+    except Exception:
+        return False
 
-# --- Streamlit UI ---
-st.set_page_config(page_title="Scholarship Advisory Rule Engine", layout="wide")
-st.title("🎓 Scholarship Advisory Rule-Based System")
-st.markdown("This system uses a rule engine to evaluate scholarship applications based on a transparent set of JSON rules.")
+def rule_matches(facts: Dict[str, Any], rule: Dict[str, Any]) -> bool:
+    """All conditions must be true (AND)."""
+    return all(evaluate_condition(facts, c) for c in rule.get("conditions", []))
 
-col1, col2 = st.columns([1, 1])
+def run_rules(facts: Dict[str, Any], rules: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Returns (best_action, fired_rules)
+    - best_action: chosen by highest priority among fired rules (ties keep the first encountered)
+    - fired_rules: list of rule dicts that matched
+    """
+    fired = [r for r in rules if rule_matches(facts, r)]
+    if not fired:
+        return ({"decision": "PENDING", "reason": "No rule matched"}, [])
 
-with col1:
-    st.subheader("1. Applicant Facts")
-    cgpa = st.number_input("Cumulative GPA (CGPA)", min_value=0.0, max_value=4.0, value=3.5, step=0.01)
-    family_income = st.number_input("Monthly Family Income (RM)", min_value=0, value=5000, step=100)
-    co_curricular_score = st.number_input("Co-curricular Involvement Score (0-100)", min_value=0, max_value=100, value=75, step=1)
-    disciplinary_actions = st.number_input("Number of Disciplinary Actions", min_value=0, value=0, step=1)
-    
-    facts = {
-        "cgpa": cgpa,
-        "family_income": family_income,
-        "co_curricular_score": co_curricular_score,
-        "disciplinary_actions": disciplinary_actions
-    }
-    
-    st.write("**Current Facts Dictionary:**")
-    st.json(facts)
+    fired_sorted = sorted(fired, key=lambda r: r.get("priority", 0), reverse=True)
+    best = fired_sorted[0].get("action", {"decision": "PENDING", "reason": "No action"})
+    return best, fired_sorted
 
-with col2:
-    st.subheader("2. Rule Editor (JSON)")
-    rules_input = st.text_area("Edit Scholarship Rules", value=default_rules, height=350)
+# ----------------------------
+# 2) Streamlit UI
+# ----------------------------
+st.set_page_config(page_title="Rule-Based System (Scholarship)", page_icon="🎓", layout="wide")
+st.title("🎓 Rule-Based System (Scholarship Advisory)")
+st.caption("Enter applicant data, edit rules in the JSON editor, and evaluate.")
+
+with st.sidebar:
+    st.header("Applicant Facts")
+    # Updated sidebar inputs to match scholarship facts
+    cgpa = st.number_input("Cumulative GPA (CGPA)", min_value=0.0, max_value=4.0, step=0.01, value=3.5)
+    family_income = st.number_input("Monthly income (RM)", min_value=0, step=100, value=5000)
+    co_curricular_score = st.number_input("Co-curricular score (0-100)", min_value=0, max_value=100, step=1, value=75)
+    disciplinary_actions = st.number_input("Disciplinary actions", min_value=0, step=1, value=0)
+
+    st.divider()
+    st.header("Rules (JSON Editor)")
+    st.caption("You can edit the scholarship rules below.")    
+    default_json = json.dumps(DEFAULT_RULES, indent=2)
+    rules_text = st.text_area("JSON Rules", value=default_json, height=350)
+
+    run = st.button("Evaluate Application", type="primary")
+
+# Updated facts dictionary mapping
+facts = {
+    "cgpa": float(cgpa),
+    "family_income": int(family_income),
+    "co_curricular_score": int(co_curricular_score),
+    "disciplinary_actions": int(disciplinary_actions),
+}
+
+st.subheader("Applicant Facts")
+st.json(facts)
+
+# Parse rules (fall back to defaults if invalid)
+try:
+    rules = json.loads(rules_text)
+    assert isinstance(rules, list), "Rules must be a JSON array"
+except Exception as e:
+    st.error(f"Invalid rules JSON. Using defaults. Details: {e}")
+    rules = DEFAULT_RULES
+
+st.subheader("Active Rules")
+with st.expander("Show rules", expanded=False):
+    st.code(json.dumps(rules, indent=2), language="json")
 
 st.divider()
 
-# --- Evaluation ---
-if st.button("Evaluate Application", type="primary", use_container_width=True):
-    try:
-        rules = json.loads(rules_input)
-        rule_name, result = evaluate_rules(facts, rules)
+if run:
+    action, fired = run_rules(facts, rules)
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        st.subheader("Decision")
+        badge = action.get("decision", "REVIEW")
+        reason = action.get("reason", "-")
         
-        st.subheader("Evaluation Result")
-        
-        if result["decision"] == "AWARD FULL":
-            st.success(f"**Decision:** {result['decision']}")
-        elif result["decision"] == "AWARD PARTIAL" or result["decision"] == "REVIEW":
-            st.warning(f"**Decision:** {result['decision']}")
+        # Output conditions updated for scholarship decisions
+        if badge == "AWARD FULL" or badge == "AWARD PARTIAL":
+            st.success(f"**{badge}** — {reason}")
+        elif badge == "REJECT":
+            st.error(f"**{badge}** — {reason}")
         else:
-            st.error(f"**Decision:** {result['decision']}")
-            
-        st.info(f"**Reason:** {result['reason']}")
-        st.caption(f"Triggered by rule: '{rule_name}'")
-        
-    except json.JSONDecodeError:
-        st.error("Invalid JSON format in the Rule Editor. Please check your syntax.")
-    except Exception as e:
-        st.error(f"An error occurred during evaluation: {e}")
+            st.warning(f"**{badge}** — {reason}")
+
+    with col2:
+        st.subheader("Matched Rules (by priority)")
+        if not fired:
+            st.info("No rules matched.")
+        else:
+            for i, r in enumerate(fired, start=1):
+                st.write(f"**{i}. {r.get('name','(unnamed)')}** | priority={r.get('priority',0)}")
+                st.caption(f"Action: {r.get('action',{})}")
+                with st.expander("Conditions"):
+                    for cond in r.get("conditions", []):
+                        st.code(str(cond))
+
+else:
+    st.info("Set input values in the sidebar and click **Evaluate Application**.")
